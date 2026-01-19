@@ -105,7 +105,7 @@ class Syntech_Product_Importer
 	}
 
 	/**
-	 * Fetch the feed and iterate through products.
+	 * Fetch the feed and iterate through products in batches.
 	 * 
 	 * @return bool|WP_Error True on success, WP_Error on failure.
 	 */
@@ -125,9 +125,15 @@ class Syntech_Product_Importer
 		}
 
 		$products = $data['syntechstock']['products'];
+		$batch_size = 50; // Keep memory usage predictable
+		$batches = array_chunk($products, $batch_size);
 
-		foreach ($products as $item) {
-			$this->create_or_update_product($item);
+		foreach ($batches as $batch) {
+			foreach ($batch as $item) {
+				$this->create_or_update_product($item);
+			}
+			// Let other WP tasks breathe between batches
+			sleep(1);
 		}
 
 		return true;
@@ -235,8 +241,8 @@ class Syntech_Product_Importer
 	 */
 	private function assign_categories(WC_Product $product, string $category_string): void
 	{
-		// Excluded categories
-		$excluded_categories = ['Just Arrived', 'Unboxed', 'Coming Soon', 'On promotion'];
+		// Excluded keywords
+		$excluded_keywords = ['Just Arrived', 'Unboxed', 'Coming Soon', 'On promotion'];
 
 		// Clean up the string and explode by '>'
 		$categories = array_map('trim', explode('>', $category_string));
@@ -244,13 +250,18 @@ class Syntech_Product_Importer
 		$parent_id = 0;
 
 		foreach ($categories as $cat_name) {
-			if (empty($cat_name) || in_array($cat_name, $excluded_categories, true)) continue;
+			if (empty($cat_name)) continue;
+
+			// Strip excluded keywords and pipe suffixes (e.g., "Routers & mesh|Coming Soon")
+			$clean_cat_name = $this->clean_category_name($cat_name, $excluded_keywords);
+
+			if (empty($clean_cat_name)) continue;
 
 			// Check if term exists under the specific parent
-			$term = term_exists($cat_name, 'product_cat', $parent_id);
+			$term = term_exists($clean_cat_name, 'product_cat', $parent_id);
 
 			if (! $term) {
-				$term = wp_insert_term($cat_name, 'product_cat', ['parent' => $parent_id]);
+				$term = wp_insert_term($clean_cat_name, 'product_cat', ['parent' => $parent_id]);
 			}
 
 			if (! is_wp_error($term) && isset($term['term_id'])) {
@@ -262,6 +273,28 @@ class Syntech_Product_Importer
 		if (! empty($term_ids)) {
 			$product->set_category_ids($term_ids);
 		}
+	}
+
+	/**
+	 * Remove excluded keywords from category names, handling pipe-delimited extras.
+	 *
+	 * @param string $category_name Raw category name from feed.
+	 * @param array $excluded_keywords Keywords to ignore entirely.
+	 * @return string Cleaned category name.
+	 */
+	private function clean_category_name(string $category_name, array $excluded_keywords): string
+	{
+		$parts = array_map('trim', explode('|', $category_name));
+		$clean_parts = [];
+
+		foreach ($parts as $part) {
+			if ($part === '' || in_array($part, $excluded_keywords, true)) {
+				continue;
+			}
+			$clean_parts[] = $part;
+		}
+
+		return implode(' | ', $clean_parts);
 	}
 
 	/**
