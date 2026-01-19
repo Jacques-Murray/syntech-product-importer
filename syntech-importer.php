@@ -235,13 +235,16 @@ class Syntech_Product_Importer
 	 */
 	private function assign_categories(WC_Product $product, string $category_string): void
 	{
+		// Excluded categories
+		$excluded_categories = ['Just Arrived', 'Unboxed', 'Coming Soon', 'On promotion'];
+
 		// Clean up the string and explode by '>'
 		$categories = array_map('trim', explode('>', $category_string));
 		$term_ids = [];
 		$parent_id = 0;
 
 		foreach ($categories as $cat_name) {
-			if (empty($cat_name)) continue;
+			if (empty($cat_name) || in_array($cat_name, $excluded_categories, true)) continue;
 
 			// Check if term exists under the specific parent
 			$term = term_exists($cat_name, 'product_cat', $parent_id);
